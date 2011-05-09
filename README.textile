@@ -1,6 +1,11 @@
 _Android app, that watches your every step_
 
 Pedometer is an application for Android phones.
+This is a fork of the excellent Android pedometer app here:
+http://code.google.com/p/pedometer/
+
+This fork utilises the Rdio & EchoNest APIs to beat-match music from Rdio
+to your current cadence.  
 
 h2. Features
 
