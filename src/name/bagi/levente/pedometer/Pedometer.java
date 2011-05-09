@@ -19,6 +19,8 @@
 package name.bagi.levente.pedometer;
 
 
+import name.bagi.levente.pedometer.StepService.PlayerListener;
+import name.bagi.levente.pedometer.StepService.Track;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
@@ -40,7 +42,7 @@ import android.widget.TextView;
 
 
 
-public class Pedometer extends Activity {
+public class Pedometer extends Activity implements PlayerListener {
 	private static final String TAG = "Pedometer";
     private SharedPreferences mSettings;
     private PedometerSettings mPedometerSettings;
@@ -63,6 +65,9 @@ public class Pedometer extends Activity {
     private float mMaintainInc;
     private boolean mQuitting = false; // Set when user selected Quit from menu, can be used by onPause, onStop, onDestroy
 
+    private TextView mTrackName;
+    private TextView mArtistName;
+    private TextView mTempo;
     
     /**
      * True, when service is running.
@@ -119,6 +124,17 @@ public class Pedometer extends Activity {
         mSpeedValueView    = (TextView) findViewById(R.id.speed_value);
         mCaloriesValueView = (TextView) findViewById(R.id.calories_value);
         mDesiredPaceView   = (TextView) findViewById(R.id.desired_pace_value);
+
+        mTrackName         = (TextView) findViewById(R.id.song_name);
+        mArtistName        = (TextView) findViewById(R.id.artist_name);
+        mTempo             = (TextView) findViewById(R.id.tempo_value);
+        
+        Button next = (Button) findViewById(R.id.next_track);
+        next.setOnClickListener(new View.OnClickListener() {
+        	public void onClick(View v) {
+        		mService.next(true);
+        	}
+        });
 
         mIsMetric = mPedometerSettings.isMetric();
         ((TextView) findViewById(R.id.distance_units)).setText(getString(
@@ -243,7 +259,7 @@ public class Pedometer extends Activity {
 
             mService.registerCallback(mCallback);
             mService.reloadSettings();
-            
+            mService.addPlayerListener(Pedometer.this);
         }
 
         public void onServiceDisconnected(ComponentName className) {
@@ -441,6 +457,14 @@ public class Pedometer extends Activity {
         }
         
     };
+
+	@Override
+	public void trackChanged(Track track) {
+		Log.i(TAG, "track changed!");
+		mTrackName.setText(track.trackName);
+		mArtistName.setText(track.artistName);
+		mTempo.setText("" + track.tempo + " BPM");
+	}
     
 
 }

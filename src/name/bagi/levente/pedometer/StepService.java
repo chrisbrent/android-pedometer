@@ -18,6 +18,22 @@
 
 package name.bagi.levente.pedometer;
 
+import java.net.HttpURLConnection;
+import java.util.LinkedList;
+import java.util.List;
+
+import org.apache.http.HttpEntity;
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.util.EntityUtils;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import com.rdio.android.api.Rdio;
+import com.rdio.android.api.RdioListener;
+
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -30,6 +46,9 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorManager;
+import android.media.MediaPlayer;
+import android.media.MediaPlayer.OnCompletionListener;
+import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.IBinder;
 import android.os.PowerManager;
@@ -50,7 +69,7 @@ import android.widget.Toast;
  * interact with the user, rather than doing something more disruptive such as
  * calling startActivity().
  */
-public class StepService extends Service {
+public class StepService extends Service implements RdioListener {
 	private static final String TAG = "name.bagi.levente.pedometer.StepService";
     private SharedPreferences mSettings;
     private PedometerSettings mPedometerSettings;
@@ -77,6 +96,42 @@ public class StepService extends Service {
     private float mSpeed;
     private float mCalories;
     
+    private final String mEchoNestKey = "HIXUT5PXOCGW36CKB";
+    private final String mRdioAppKey = "a3dwpuqqh4xccnpbx6zy37wk";
+    private final String mRdioAppSecret = "f9sCTPhKxM";
+    private static Rdio mRdio;
+    private MediaPlayer mPlayer;
+    private boolean mQueryBusy;
+    private List<Track> mTracks;
+    private Track mCurrentTrack;
+    
+	// Our model for the metadata for a track that we care about
+	public class Track {
+		public String key;
+		public String trackName;
+		public String artistName;
+		public int tempo;
+
+		public Track(String key, String trackName, String artistName, int tempo) {
+			this.key = key;
+			this.trackName = trackName;
+			this.artistName = artistName;
+			this.tempo = tempo;
+		}
+	}
+
+    public interface PlayerListener {
+        public void trackChanged(StepService.Track track);
+    }
+    private PlayerListener mPlayerListener;
+    public void addPlayerListener(PlayerListener listener) {
+    	mPlayerListener = listener;
+    }
+    public void notifyPlayerListener(Track track) {
+        mPlayerListener.trackChanged(track);
+    }
+
+
     /**
      * Class for clients to access.  Because we know this service always
      * runs in the same process as its clients, we don't need to deal with
@@ -147,6 +202,9 @@ public class StepService extends Service {
         mSpeakingTimer.addListener(mCaloriesNotifier);
         mStepDetector.addStepListener(mSpeakingTimer);
         
+        if (mRdio == null) {
+        	mRdio = new Rdio(mRdioAppKey, mRdioAppSecret, null, null, this, this);
+        }
         // Used when debugging:
         // mStepBuzzer = new StepBuzzer(this);
         // mStepDetector.addStepListener(mStepBuzzer);
@@ -168,6 +226,18 @@ public class StepService extends Service {
     public void onDestroy() {
         Log.i(TAG, "[SERVICE] onDestroy");
         mUtils.shutdownTTS();
+        
+        // Cleanup after the Rdio object
+        if (mRdio != null) {
+        	mRdio.cleanup();
+        	mRdio = null;
+        }
+        // Cleanup any player we have lingering around
+        if (mPlayer != null) {
+        	mPlayer.reset();
+        	mPlayer.release();
+        	mPlayer = null;
+        }
 
         // Unregister our receiver.
         unregisterReceiver(mReceiver);
@@ -410,5 +480,186 @@ public class StepService extends Service {
         wakeLock.acquire();
     }
 
-}
+    /**
+     * RdioListener interface
+     */
+	@Override
+	public void onRdioReady() {
+		mQueryBusy = false;
+		mTracks = new LinkedList<Track>();
+        mPaceNotifier.addListener(mRdioPaceListener);
+	}
 
+	@Override
+	public void onRdioUserPlayingElsewhere() {
+		// TODO Implement this		
+	}
+
+	@Override
+	public void onRdioUserAppApprovalNeeded(Intent authorisationIntent) {
+		// Not making API calls which require authentication
+	}
+
+	@Override
+	public void onRdioAuthorised(String accessToken, String accessTokenSecret) {
+		// Not making API calls which require authentication
+	}
+
+	/**
+	 * Rdio API bits
+	 */
+	PaceNotifier.Listener mRdioPaceListener = new PaceNotifier.Listener() {
+        public void paceChanged(int value) {
+        	if (value > 0 && mCurrentTrack != null && Math.abs(mPace - mCurrentTrack.tempo) > 50 && mTracks.size() > 0)
+        		next(true);
+        	
+        	if (value > 0 && !mQueryBusy) {
+        		mQueryBusy = true;
+        		
+        		// Query EchoNest to find songs that match this pace
+        		// http://developer.echonest.com/api/v4/song/search?api_key=N6E4NIOVYMTHNDM8J&format=json&results=1&artist=radiohead&title=karma%20police
+        		int maxTempo = value + 10;
+        		int minTempo = value - 10;
+        		
+        		final String url = "http://developer.echonest.com/api/v4/song/search?api_key=" + mEchoNestKey + "&format=json&results=5&max_tempo=" +
+        							(maxTempo > 500 ? 500 : maxTempo) + "&min_tempo=" + (minTempo < 0 ? 0 : minTempo) +
+        							"&bucket=id:rdio-us-streaming&bucket=audio_summary&limit=true&sort=danceability-desc";
+        		Log.i(TAG, "Searching for songs via EchoNest: " + url);
+        		AsyncTask<Void, Void, JSONObject> searchTask = new AsyncTask<Void, Void, JSONObject>() {
+					@Override
+					protected JSONObject doInBackground(Void... params) {
+						HttpClient client = new DefaultHttpClient();
+						HttpGet get = new HttpGet(url);
+
+						try {
+							HttpResponse response = client.execute(get);
+							if (response.getStatusLine().getStatusCode() != HttpURLConnection.HTTP_OK) {
+								String error = "Request failed with status " + response.getStatusLine();
+								Log.e(TAG, error);
+								throw new Exception(error);
+							}
+							HttpEntity entity = response.getEntity();
+							if (entity == null) {
+								String error = "Null entity in response";
+								Log.e(TAG, error);
+								throw new Exception(error);
+							}
+							String jsonString = EntityUtils.toString(entity);
+							JSONObject json = new JSONObject(jsonString);
+							return json;
+						} catch (Exception e) {
+							Log.e(TAG, "Error searching EchoNest: ", e);
+							return null;
+						}
+					}
+					
+					@Override
+					protected void onPostExecute(JSONObject json) {
+						mQueryBusy = false;
+						if (json == null)
+							return;
+						
+						try {
+							Log.i(TAG, "JSON returned from EchoNest: " + json.toString(2));
+							json = json.getJSONObject("response");
+							int statusCode = json.getJSONObject("status").getInt("code");
+							if (statusCode != 0) {
+								Log.i(TAG, "Unsuccessful search.");
+								return;
+							}
+							
+							JSONArray songs = json.getJSONArray("songs");
+							if (songs.length() <= 0) {
+								Log.i(TAG, "No results returned for search.");
+								return;
+							}
+							
+							List<Track> newTracks = new LinkedList<Track>();
+							for (int i=0; i<songs.length(); i++) {
+								JSONObject song = songs.getJSONObject(i);
+								String rdioKey = song.getJSONArray("foreign_ids").getJSONObject(0).getString("foreign_id");
+								if (!rdioKey.startsWith("rdio-us-streaming:song:")) {
+									Log.i(TAG, "Skipping song " + i + ", not an Rdio key");
+									continue;
+								}
+								
+								rdioKey = rdioKey.replace("rdio-us-streaming:song:", "");
+								Log.i(TAG, "Adding " + rdioKey + " to play queue");
+								
+								String name = song.getString("title");
+								String artist = song.getString("artist_name");
+								int tempo = song.getJSONObject("audio_summary").getInt("tempo");
+								newTracks.add(new Track(rdioKey, name, artist, tempo));
+							}
+							
+							mTracks.addAll(0, newTracks);
+							if (mTracks.size() > 20)
+								mTracks = mTracks.subList(0, 20);
+							Log.i(TAG, "Track queue: ");
+							for (int i=0; i < mTracks.size(); i++) {
+								Log.i(TAG, "\t" + mTracks.get(i));
+							}
+							
+							if (mPlayer == null || Math.abs(mPace - mCurrentTrack.tempo) > 50)
+								next(true);
+						} catch (Exception e) {
+							Log.e(TAG, "Error parsing JSON: ", e);
+						}
+					}
+        		};
+        		searchTask.execute();
+        	}
+            passValue();
+        }
+        
+        public void passValue() {
+            if (mCallback != null) {
+                mCallback.paceChanged(mPace);
+            }
+        }
+	};
+	
+	public void next(final boolean manualPlay) {
+		if (mPlayer != null) {
+			mPlayer.stop();
+			mPlayer.release();
+			mPlayer = null;
+		}
+
+		if (mTracks.size() == 0) {
+			Log.e(TAG, "No tracks on queue :(");
+			return;
+		}
+
+		mCurrentTrack = mTracks.remove(0);
+		// Load the next track in the background and prep the player (to start buffering)
+		// Do this in a bkg thread so it doesn't block the main thread in .prepare()
+		AsyncTask<Void, Void, Void> task = new AsyncTask<Void, Void, Void>() {
+			@Override
+			protected Void doInBackground(Void... params) {
+				try {
+					Log.i(TAG, "Playing track...");
+					mPlayer = mRdio.getPlayerForTrack(mCurrentTrack.key, null, manualPlay);
+					mPlayer.prepare();
+					mPlayer.setOnCompletionListener(new OnCompletionListener() {
+						@Override
+						public void onCompletion(MediaPlayer mp) {
+							next(false);
+						}
+					});
+					mPlayer.start();
+					
+				} catch (Exception e) {
+					Log.e("Test", "Exception " + e);
+				}
+				return null;
+			}
+			
+			@Override
+			protected void onPostExecute(Void r) {
+				notifyPlayerListener(mCurrentTrack);
+			}
+		};
+		task.execute();
+	}
+}

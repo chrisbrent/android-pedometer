@@ -53,6 +53,7 @@ public final class R {
         public static final int line40=0x7f020002;
     }
     public static final class id {
+        public static final int artist_name=0x7f090017;
         public static final int box_calories=0x7f09000e;
         public static final int box_distance=0x7f090004;
         public static final int box_pace=0x7f090008;
@@ -67,14 +68,17 @@ public final class R {
         public static final int desired_pace_value=0x7f090014;
         public static final int distance_units=0x7f090006;
         public static final int distance_value=0x7f090005;
+        public static final int next_track=0x7f090019;
         public static final int pace_units=0x7f09000a;
         public static final int pace_value=0x7f090009;
         public static final int row_1=0x7f090000;
         public static final int row_2=0x7f090007;
+        public static final int song_name=0x7f090016;
         public static final int speed_units=0x7f09000d;
         public static final int speed_value=0x7f09000c;
         public static final int step_units=0x7f090003;
         public static final int step_value=0x7f090002;
+        public static final int tempo_value=0x7f090018;
     }
     public static final class layout {
         public static final int main=0x7f030000;

@@ -3,5 +3,8 @@
 	<classpathentry kind="con" path="com.android.ide.eclipse.adt.ANDROID_FRAMEWORK"/>
 	<classpathentry kind="src" path="src"/>
 	<classpathentry kind="src" path="gen"/>
+	<classpathentry kind="lib" path="/Users/stevel/ws/android-pedometer/libs/signpost-commonshttp4-1.2.1.1.jar"/>
+	<classpathentry kind="lib" path="/Users/stevel/ws/android-pedometer/libs/signpost-core-1.2.1.1.jar"/>
+	<classpathentry combineaccessrules="false" kind="src" path="/Rdio Android API"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>
